@@ -154,6 +154,11 @@ public final class Voicechat extends JavaPlugin {
         if (SERVER != null) {
             SERVER.getServer().close();
         }
+        PluginManager manager = PluginManager.getIfInitialized();
+        if (manager != null) {
+            manager.shutdown();
+        }
+        apiService = null;
     }
 
     public static boolean debugMode() {

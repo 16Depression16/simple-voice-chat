@@ -24,6 +24,13 @@ public class EventBuilder {
         return this;
     }
 
+    public EventBuilder addEvents(EventBuilder other) {
+        for (Map.Entry<Class<? extends Event>, List<Tuple<Integer, Consumer<? extends Event>>>> entry : other.events.entrySet()) {
+            events.computeIfAbsent(entry.getKey(), key -> new ArrayList<>()).addAll(entry.getValue());
+        }
+        return this;
+    }
+
     public Map<Class<? extends Event>, List<Consumer<? extends Event>>> build() {
         Map<Class<? extends Event>, List<Consumer<? extends Event>>> result = new HashMap<>();
         for (Map.Entry<Class<? extends Event>, List<Tuple<Integer, Consumer<? extends Event>>>> entry : events.entrySet()) {
