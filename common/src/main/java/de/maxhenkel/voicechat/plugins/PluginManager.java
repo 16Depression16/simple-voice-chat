@@ -24,41 +24,88 @@ import java.util.function.Consumer;
 
 public class PluginManager {
 
-    private List<VoicechatPlugin> plugins;
-    private Map<Class<? extends Event>, List<Consumer<? extends Event>>> events;
+    private volatile boolean initialized;
+    private boolean refreshing;
+    private boolean refreshPending;
+    private long lifecycleGeneration;
+    private final Map<VoicechatPlugin, EventBuilder> registrations = new IdentityHashMap<>();
+    private volatile Map<Class<? extends Event>, List<Consumer<? extends Event>>> events = Collections.emptyMap();
     private final Map<UUID, List<PlayerAudioListener>> playerAudioListeners = new ConcurrentHashMap<>();
 
-    public void init() {
-        if (plugins != null) {
+    public synchronized void init() {
+        if (initialized) {
             return;
         }
-        Voicechat.LOGGER.info("Loading plugins");
-        plugins = CommonCompatibilityManager.INSTANCE.loadPlugins();
-        Voicechat.LOGGER.info("Loaded {} plugin(s)", plugins.size());
-        Voicechat.LOGGER.info("Initializing plugins");
+        initialized = true;
+        refresh();
+    }
+
+    public synchronized void refresh() {
+        if (!initialized) {
+            return;
+        }
+        if (refreshing) {
+            refreshPending = true;
+            return;
+        }
+        refreshing = true;
+        try {
+            do {
+                refreshPending = false;
+                refreshPlugins();
+            } while (refreshPending && initialized);
+        } finally {
+            refreshing = false;
+        }
+    }
+
+    private void refreshPlugins() {
+        long generation = lifecycleGeneration;
+        List<VoicechatPlugin> plugins = CommonCompatibilityManager.INSTANCE.loadPlugins();
         for (VoicechatPlugin plugin : plugins) {
+            if (registrations.containsKey(plugin)) {
+                continue;
+            }
             try {
                 plugin.initialize(VoicechatServerApiImpl.instance());
             } catch (Throwable e) {
                 Voicechat.LOGGER.warn("Failed to initialize plugin '{}'", plugin.getPluginId(), e);
             }
-        }
-        Voicechat.LOGGER.info("Initialized {} plugin(s)", plugins.size());
-        gatherEvents();
-    }
-
-    private void gatherEvents() {
-        EventBuilder eventBuilder = EventBuilder.create();
-        EventRegistration registration = eventBuilder::addEvent;
-        for (VoicechatPlugin plugin : plugins) {
-            Voicechat.LOGGER.info("Registering events for '{}'", plugin.getPluginId());
-            try {
-                plugin.registerEvents(registration);
-            } catch (Throwable t) {
-                Voicechat.LOGGER.error("Failed to register events for '{}'", plugin.getPluginId(), t);
+            if (!initialized || generation != lifecycleGeneration) {
+                return;
             }
         }
+        Map<VoicechatPlugin, EventBuilder> updated = new IdentityHashMap<>();
+        EventBuilder eventBuilder = EventBuilder.create();
+        for (VoicechatPlugin plugin : plugins) {
+            EventBuilder registration = registrations.get(plugin);
+            if (registration == null) {
+                registration = EventBuilder.create();
+                Voicechat.LOGGER.info("Registering events for '{}'", plugin.getPluginId());
+                try {
+                    plugin.registerEvents(registration::addEvent);
+                } catch (Throwable t) {
+                    Voicechat.LOGGER.error("Failed to register events for '{}'", plugin.getPluginId(), t);
+                }
+                if (!initialized || generation != lifecycleGeneration) {
+                    return;
+                }
+            }
+            updated.put(plugin, registration);
+            eventBuilder.addEvents(registration);
+        }
         events = eventBuilder.build();
+        registrations.clear();
+        registrations.putAll(updated);
+    }
+
+    public synchronized void shutdown() {
+        lifecycleGeneration++;
+        initialized = false;
+        refreshPending = false;
+        events = Collections.emptyMap();
+        registrations.clear();
+        playerAudioListeners.clear();
     }
 
     public synchronized boolean registerAudioListener(AudioListener l) {
@@ -285,6 +332,10 @@ public class PluginManager {
     }
 
     private static PluginManager instance;
+
+    public static synchronized PluginManager getIfInitialized() {
+        return instance == null || !instance.initialized ? null : instance;
+    }
 
     public static synchronized PluginManager instance() {
         if (instance == null) {

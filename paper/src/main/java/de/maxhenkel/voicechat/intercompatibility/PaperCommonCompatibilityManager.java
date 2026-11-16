@@ -8,6 +8,7 @@ import de.maxhenkel.voicechat.api.VoicechatServerApi;
 import de.maxhenkel.voicechat.net.NetManager;
 import de.maxhenkel.voicechat.net.PaperNetManager;
 import de.maxhenkel.voicechat.permission.PaperPermissionManager;
+import de.maxhenkel.voicechat.plugins.PluginManager;
 import de.maxhenkel.voicechat.plugins.impl.VoicechatPaperApiImpl;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.server.MinecraftServer;
@@ -76,6 +77,10 @@ public class PaperCommonCompatibilityManager extends CommonCompatibilityManager 
         if (netManager != null) {
             netManager.close();
             netManager = null;
+        }
+        PluginManager manager = PluginManager.getIfInitialized();
+        if (manager != null) {
+            manager.shutdown();
         }
     }
 
